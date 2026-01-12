@@ -1,0 +1,6 @@
+{
+  "api_key": "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",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "deepseek/deepseek-v3.2",
+  "http_proxy": "http://127.0.0.1:1099"
+}

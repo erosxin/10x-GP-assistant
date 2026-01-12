@@ -1,0 +1,61 @@
+version: 0.1
+market_split:
+  china: 0.7
+  overseas: 0.3
+
+topics:
+  - name: "销售/增长"
+    queries:
+      - "AI SDR agent"
+      - "sales agent outbound"
+      - "B2B prospecting agent"
+      - "线索跟进 AI 智能体"
+      - "销售自动化 AI agent"
+    weight: 1.0
+
+  - name: "软件研发"
+    queries:
+      - "AI coding agent devops"
+      - "test automation agent"
+      - "AI data analyst agent"
+      - "代码审查 AI 智能体"
+      - "自动化测试 AI agent"
+    weight: 1.0
+
+  - name: "电商与跨境"
+    queries:
+      - "AI ecommerce agent listing"
+      - "amazon listing agent"
+      - "跨境电商 AI 智能体 选品"
+      - "投放创意 AI agent"
+      - "customer support ai agent ecommerce"
+    weight: 0.9
+
+  - name: "金融/合规"
+    queries:
+      - "AML ai agent"
+      - "compliance agent audit"
+      - "合同审查 AI 智能体"
+      - "风控 AI agent"
+      - "SOX audit automation agent"
+    weight: 0.8
+
+  - name: "陪伴/情绪价值"
+    queries:
+      - "AI companion app"
+      - "AI girlfriend boyfriend"
+      - "virtual character companion"
+      - "AI玩具 语音 陪伴"
+      - "情绪陪伴 AI 应用"
+    weight: 1.1
+
+search:
+  provider: "serper"
+  results_per_query: 10
+  gl: "us"
+  hl: "en"
+  gl_cn: "cn"
+  hl_cn: "zh-cn"
+
+report:
+  top_n: 20

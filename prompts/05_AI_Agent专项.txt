@@ -1,0 +1,55 @@
+🔀 Track Overlay: AI Agent（中国语境）
+适用对象：
+Autonomous / Semi-autonomous Agents
+Workflow Agent / Tool-using Agent / Decision Agent
+________________________________________
+B1. 真 Agent vs Script + Prompt（去伪存真）
+强制回答：
+•	Agent 是否具备：
+o	状态（Memory）？
+o	工具选择自由度？
+o	多步失败恢复能力？
+•	如果把 Agent：
+o	限制为单步调用
+o	是否业务效果基本不变？
+👉 若是：
+这是自动化脚本，不是 Agent。
+________________________________________
+B2. 中国 Agent 的“责任断点”问题
+在中国市场，Agent 最大的问题不是智能，而是责任。
+必须回答：
+•	Agent 出错时：
+o	谁背锅？
+o	是否可回溯？
+o	是否可人工接管？
+•	是否存在：
+o	审计日志？
+o	行为边界？
+o	红线规则？
+👉 没有“刹车系统”的 Agent = 不可商用
+________________________________________
+B3. 数据与权限真实可得性
+现实拷问：
+•	Agent 需要的数据： 
+o	是否真的能合法接入？
+o	是否需要 ToG / 国企授权？
+•	客户是否愿意： 
+o	把核心系统权限交给 Agent？
+Agent Demo ≠ Agent Deployment
+________________________________________
+B4. Agent 的“组织冲突系数”
+Agent 是否：
+•	取代具体岗位？
+•	打破部门边界？
+•	触碰灰色权力结构？
+👉 如果是：
+在中国 阻力 ≠ 技术问题，而是政治问题。
+________________________________________
+✅ Agent Track Verdict 强制输出
+额外输出：
+•	Agent Autonomy Level：
+Assistive / Semi-autonomous / Fully Autonomous
+•	Organizational Resistance Index（High / Medium / Low）
+•	Commercialization Feasibility (China)：
+Now / 2–3 Years / Unclear
+
