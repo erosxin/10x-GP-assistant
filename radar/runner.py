@@ -10,7 +10,7 @@ import yaml
 import hashlib
 import re
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil.relativedelta import relativedelta
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 import sys
@@ -373,7 +373,7 @@ def upsert_radar_items(client, items: list, topic_name: str, query: str = ""):
             "topic": topic_name,
             "hostname": hostname,
             "source": source,  # 确保永不为 None
-            "fetched_at": datetime.utcnow().isoformat()
+            "fetched_at": datetime.now(timezone.utc).isoformat()
         }
         
         # 在 insert 前打印调试信息
@@ -410,8 +410,8 @@ def upsert_deals(client, items: list, topic_name: str):
     processed_count = 0
     reactivated_count = 0
     error_count = 0
-    now = datetime.utcnow()
-    now_iso = now.isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()  # 自动包含 +00:00 时区信息
     
     for item in items:
         url = item.get("link", "")
@@ -451,6 +451,16 @@ def upsert_deals(client, items: list, topic_name: str):
                 existing_deal = existing_response.data[0]
         except Exception as e:
             print(f"⚠️ 查询现有记录失败 ({dedupe_key[:8]}): {e}")
+            error_count += 1
+            continue  # 查询失败，跳过该记录
+        
+        # Archived 保护：如果现有记录状态为 archived，完全跳过更新
+        if existing_deal:
+            existing_status = existing_deal.get("status")
+            if existing_status == "archived":
+                deal_id = existing_deal.get("id")
+                print(f"    ⏸️ Skip archived deal {deal_id} (dedupe_key: {dedupe_key[:16]}...)")
+                continue  # 完全跳过 archived 记录的更新
         
         # 合并 evidence_urls（并集去重，保持最大 N 条）
         EVIDENCE_URLS_MAX = 20  # 最大保留 evidence_urls 数量
@@ -493,8 +503,9 @@ def upsert_deals(client, items: list, topic_name: str):
         
         existing_status = existing_deal.get("status") if existing_deal else None
         
-        # 规则 A：禁止改动 shortlisted/archived 的 status
-        if existing_status in ["shortlisted", "archived"]:
+        # 规则 A：禁止改动 shortlisted 的 status
+        # 注意：archived 状态已在前面处理（直接跳过），这里只处理 shortlisted
+        if existing_status == "shortlisted":
             # 保持人工状态，不更新 status
             pass
         elif existing_status == "dismissed":
@@ -567,8 +578,9 @@ def upsert_deals(client, items: list, topic_name: str):
             pass
         
         # 规则 A + 规则 B：状态更新逻辑
-        # 关键：禁止改动 shortlisted/archived 的 status
-        if existing_status in ["shortlisted", "archived"]:
+        # 关键：禁止改动 shortlisted 的 status
+        # 注意：archived 状态已在前面处理（直接跳过），这里只处理 shortlisted
+        if existing_status == "shortlisted":
             # 规则 A：保持人工状态，绝不更新 status
             # seen_count 和 last_seen_at 仍然会更新（已在上面的 data 中设置）
             pass
@@ -635,7 +647,7 @@ def reactivate_dismissed_deals(client) -> int:
         response = client.table("deals")\
             .select("id")\
             .eq("status", "dismissed")\
-            .gte("last_seen_at", (datetime.utcnow() - timedelta(days=7)).isoformat())\
+            .gte("last_seen_at", (datetime.now(timezone.utc) - timedelta(days=7)).isoformat())\
             .execute()
         
         deal_ids = [deal.get("id") for deal in (response.data if hasattr(response, 'data') else [])]
@@ -652,7 +664,7 @@ def reactivate_dismissed_deals(client) -> int:
                         "status": "new",
                         "dismissed_reason": None,
                         "dismissed_at": None,
-                        "updated_at": datetime.utcnow().isoformat()
+                        "updated_at": datetime.now(timezone.utc).isoformat()
                     })\
                     .eq("id", deal_id)\
                     .execute()
@@ -670,17 +682,18 @@ def reactivate_dismissed_deals(client) -> int:
         return 0
 
 
-def health_check_deals(client) -> dict:
-    """DB 健康检查：检查 evidence_urls、seen_count、last_seen_at
+def health_check_deals(client, run_started_at: datetime = None) -> dict:
+    """DB 健康检查：检查 evidence_urls、seen_count、last_seen_at、archived 保护
     
     Args:
         client: Supabase 客户端
+        run_started_at: 本次运行开始时间（用于 archived 验收检查，如果为 None 则使用过去 60 分钟）
         
     Returns:
-        dict: 健康检查结果
+        dict: 健康检查结果，包含 archived_updated_last_2h 字段（必定返回 dict）
     """
     if not client:
-        return {}
+        return {"evidence_over_20": 0, "seen_count_null": 0, "latest_last_seen_at": None, "archived_updated_last_2h": 0}
     
     try:
         # 查询所有记录进行统计
@@ -710,17 +723,49 @@ def health_check_deals(client) -> dict:
                 if latest_last_seen_at is None or last_seen > latest_last_seen_at:
                     latest_last_seen_at = last_seen
         
+        # Archived 保护验收：检查自本次运行开始时间以来是否有 archived 记录被更新
+        archived_updated_last_2h = 0
+        threshold_time_str = None
+        try:
+            # 使用 run_started_at 作为阈值（如果提供），否则使用过去 60 分钟
+            if run_started_at:
+                # 确保 run_started_at 是 timezone-aware
+                if run_started_at.tzinfo is None:
+                    threshold_time = run_started_at.replace(tzinfo=timezone.utc)
+                else:
+                    threshold_time = run_started_at
+                threshold_time_str = threshold_time.isoformat()
+            else:
+                # 使用过去 60 分钟作为阈值
+                threshold_time = datetime.now(timezone.utc) - timedelta(minutes=60)
+                threshold_time_str = threshold_time.isoformat()
+            
+            archived_response = client.table("deals")\
+                .select("id")\
+                .eq("status", "archived")\
+                .gt("last_seen_at", threshold_time_str)\
+                .execute()
+            
+            archived_updated_last_2h = len(archived_response.data if hasattr(archived_response, 'data') else [])
+            
+            # 打印阈值时间用于调试
+            threshold_display = threshold_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+            print(f"    📅 Archived 验收阈值时间: {threshold_display}")
+        except Exception as e:
+            print(f"    ⚠️ Archived 保护验收检查失败: {e}")
+        
         result = {
             "evidence_over_20": evidence_over_20,
             "seen_count_null": seen_count_null,
-            "latest_last_seen_at": latest_last_seen_at
+            "latest_last_seen_at": latest_last_seen_at,
+            "archived_updated_last_2h": archived_updated_last_2h
         }
         
         return result
         
     except Exception as e:
         print(f"    ⚠️ 健康检查失败: {e}")
-        return {}
+        return {"evidence_over_20": 0, "seen_count_null": 0, "latest_last_seen_at": None, "archived_updated_last_2h": 0}
 
 
 def generate_weekly_report(client, config: dict) -> str:
@@ -816,8 +861,8 @@ def upsert_weekly_report(client, report_content: str) -> bool:
         "week_start": week_start.isoformat(),
         "markdown": report_md,  # 表结构要求 markdown 字段 NOT NULL
         "content": report_md,   # 如果需要保留 content，让它等于同一份文本
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
     try:
@@ -836,7 +881,7 @@ def main():
     Returns:
         int: 成功返回 0，失败返回非 0
     """
-    start_time = datetime.utcnow()
+    start_time = datetime.now(timezone.utc)
     print("🚀 启动雷达抓取任务...")
     print(f"   开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
     
@@ -928,7 +973,7 @@ def main():
     total_deals_reactivated += db_reactivated_count
     
     # (2) 最小化监控日志
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     duration = end_time - start_time
     duration_seconds = duration.total_seconds()
     
@@ -946,18 +991,27 @@ def main():
     # (3) DB 健康检查（每天跑一次，可选：只在特定时间运行）
     # 这里每次都运行，实际可以根据需要改为每天一次
     print(f"\n🏥 执行 DB 健康检查...")
-    health_result = health_check_deals(client)
+    health_result = health_check_deals(client, run_started_at=start_time)
     if health_result:
         print(f"    📊 健康检查结果:")
         print(f"      - evidence_urls 超过 20 条: {health_result.get('evidence_over_20', 0)} 条")
         print(f"      - seen_count 为 null: {health_result.get('seen_count_null', 0)} 条")
         print(f"      - 最新 last_seen_at: {health_result.get('latest_last_seen_at', 'N/A')}")
+        print(f"      - archived 记录在过去 2 小时内被更新: {health_result.get('archived_updated_last_2h', 0)} 条")
         
         # 如果有异常，打印警告
         if health_result.get('evidence_over_20', 0) > 0:
             print(f"    ⚠️ 警告：发现 {health_result.get('evidence_over_20')} 条记录的 evidence_urls 超过 20 条")
         if health_result.get('seen_count_null', 0) > 0:
             print(f"    ⚠️ 警告：发现 {health_result.get('seen_count_null')} 条记录的 seen_count 为 null")
+        
+        # Archived 保护验收：如果过去 2 小时内有 archived 记录被更新，返回非 0 退出码
+        archived_updated_count = health_result.get('archived_updated_last_2h', 0)
+        if archived_updated_count > 0:
+            print(f"\n❌ 验收失败：发现 {archived_updated_count} 条 archived 记录在过去 2 小时内被更新")
+            print(f"   这违反了 archived 保护规则，可能存在代码回归")
+            print(f"   请检查 runner 代码中的 archived 保护逻辑")
+            return 1
     
     print(f"\n✅ 雷达抓取任务完成！")
     return 0
